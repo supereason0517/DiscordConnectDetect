@@ -119,7 +119,10 @@ async def ping(ctx):
     await ctx.send("Pong!")
 
 def run_bot():
-    bot.run('BOT_TOKEN')
+    try:
+        bot.run('BOT_TOKEN')
+    except Exception as e:
+        print(f"Bot 啟動失敗: {e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8081))
