@@ -55,26 +55,29 @@ async def check_log(ctx):
     # 清除舊的紀錄
     clean_old_logs()
 
-    if ctx.author.id in user_logs:
-        log = user_logs[ctx.author.id]
-        last_disconnect_time = log.get("last_disconnect_time", "無紀錄")
+    if user_logs:
+        response = ""
+        for log in user_logs.values():
+            last_disconnect_time = log.get("last_disconnect_time", "無紀錄")
 
-        if log["disconnect_time"]:
-            disconnect_time_str = log["disconnect_time"].strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            disconnect_time_str = "連接中"
+            if log["disconnect_time"]:
+                disconnect_time_str = log["disconnect_time"].strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                disconnect_time_str = "連接中"
 
-        if isinstance(last_disconnect_time, datetime):
-            last_disconnect_time_str = last_disconnect_time.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            last_disconnect_time_str = "無紀錄"
+            if isinstance(last_disconnect_time, datetime):
+                last_disconnect_time_str = last_disconnect_time.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                last_disconnect_time_str = "無紀錄"
 
-        await ctx.send(
-            f"Username: {log['username']}\n"
-            f"連接時間: {log['connect_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"斷開時間: {disconnect_time_str}\n"
-            f"上次斷開時間: {last_disconnect_time_str}"
-        )
+            response += (
+                f"Username: {log['username']}\n"
+                f"連接時間: {log['connect_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"斷開時間: {disconnect_time_str}\n"
+                f"上次斷開時間: {last_disconnect_time_str}\n\n"
+            )
+
+        await ctx.send(response.strip())
     else:
         await ctx.send("無紀錄。")
 
