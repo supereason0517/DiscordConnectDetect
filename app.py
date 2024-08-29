@@ -1,7 +1,9 @@
+import asyncio
 from flask import Flask
 import threading
 import discord
 from discord.ext import commands
+from discord.ext.commands import MissingPermissions
 from datetime import datetime, timedelta
 import os
 
@@ -11,14 +13,14 @@ app = Flask(__name__)
 def home():
     return "Bot 啟動!"
 
-# 啟用所有 Intents
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 user_logs = {}
+timeout_users = {}
 
 def clean_old_logs():
-    """移除超過12小時的舊紀錄"""
+    #移除超過12小時的舊紀錄
     global user_logs
     current_time = datetime.utcnow() + timedelta(hours=8)
     cutoff_time = current_time - timedelta(hours=12)
@@ -26,15 +28,26 @@ def clean_old_logs():
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    global user_logs
+    global user_logs, timeout_users
+
     current_time = datetime.utcnow() + timedelta(hours=8)
 
+    # 清除舊的紀錄
     clean_old_logs()
 
-    print(f"偵測到語音狀態變化: {member.name} 在 {before.channel} -> {after.channel}")
+    # 檢查是否有在 timeout 列表中的user切換了頻道
+    if member.id in timeout_users:
+        timeout_info = timeout_users[member.id]
+        target_channel = timeout_info["target_channel"]
+        
+        # 檢查user是否已經連接到某個頻道
+        if after.channel is not None and after.channel != target_channel:
+            # 將user移回到禁閉室
+            await member.move_to(target_channel)
+            await member.guild.system_channel.send(f"{member.mention} 還想逃阿乖乖蹲好")
 
+    # 記錄user的連接和斷開時間
     if before.channel is None and after.channel is not None:
-        # 使用者連接到語音頻道
         user_logs[member.id] = {
             "username": member.name,
             "connect_time": current_time,
@@ -42,46 +55,64 @@ async def on_voice_state_update(member, before, after):
             "last_disconnect_time": user_logs.get(member.id, {}).get("disconnect_time")
         }
     elif before.channel is not None and after.channel is None:
-        # 使用者斷開語音頻道
         if member.id in user_logs:
             user_logs[member.id]["disconnect_time"] = current_time
 
-@bot.command(name="check")
-async def check_log(ctx):
-    global user_logs
-    current_time = datetime.utcnow() + timedelta(hours=8)
-    cutoff_time = current_time - timedelta(hours=12)
+@bot.command(name="timeout")
+@commands.has_permissions(administrator=True)
+async def timeout(ctx, member: discord.Member):
+    #將用戶移到禁閉室並開始計時
+    global timeout_users
 
-    # 清除舊的紀錄
-    clean_old_logs()
+    # 找到禁閉室頻道
+    guild = ctx.guild
+    target_channel = discord.utils.get(guild.voice_channels, name="禁閉室")
+    
+    if target_channel is None:
+        await ctx.send("找不到名為'禁閉室'的語音頻道。")
+        return
 
-    if user_logs:
-        response = ""
-        for log in user_logs.values():
-            last_disconnect_time = log.get("last_disconnect_time", "無紀錄")
+    # 檢查user是否已經在某個頻道中
+    if member.voice is not None:
+        # 將用戶移動到"禁閉室"
+        await member.move_to(target_channel)
 
-            if log["disconnect_time"]:
-                disconnect_time_str = log["disconnect_time"].strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                disconnect_time_str = "連接中"
+        # 記錄這個用戶的 timeout 狀態
+        timeout_users[member.id] = {
+            "target_channel": target_channel,
+            "end_time": datetime.utcnow() + timedelta(minutes=1)
+        }
 
-            if isinstance(last_disconnect_time, datetime):
-                last_disconnect_time_str = last_disconnect_time.strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                last_disconnect_time_str = "無紀錄"
+        await ctx.send(f"{member.name} 你就乖乖蹲個1分鐘吧。")
 
-            response += (
-                f"Username: {log['username']}\n"
-                f"連接時間: {log['connect_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"斷開時間: {disconnect_time_str}\n"
-                f"上次斷開時間: {last_disconnect_time_str}\n\n"
-            )
+        # 啟動計時器
+        await asyncio.sleep(60)
 
-        await ctx.send(response.strip())
+        # 解除 timeout 狀態
+        if member.id in timeout_users:
+            del timeout_users[member.id]
+        await ctx.send(f"{member.name} 的 Timeout 結束。")
     else:
-        await ctx.send("無紀錄。")
+        await ctx.send(f"{member.name} 不在語音頻道中，ban不了。")
 
-# 測試指令，確保 Bot 能夠正常接收指令
+@bot.command(name="unban")
+@commands.has_permissions(administrator=True)
+async def unban(ctx, member: discord.Member):
+    #立即解除用戶的 timeout 狀態
+    global timeout_users
+
+    if member.id in timeout_users:
+        del timeout_users[member.id]
+        await ctx.send(f"{member.name} 的 Timeout 結束。")
+    else:
+        await ctx.send(f"{member.name} 沒被ban阿。")
+
+@timeout.error
+async def timeout_error(ctx, error):
+    if isinstance(error, MissingPermissions):
+        await ctx.send("你沒有權限使用這個指令")
+
+# 測試指令
 @bot.command(name="ping")
 async def ping(ctx):
     await ctx.send("Pong!")
