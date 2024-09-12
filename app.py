@@ -21,7 +21,7 @@ timeout_users = {}
 def clean_old_logs():
     # 移除超過12小時的舊紀錄
     global user_logs
-    cutoff_time = datetime.utcnow() + timedelta(hours=8) - timedelta(hours=12)
+    cutoff_time = datetime.now() - timedelta(hours=12)
     user_logs = {k: v for k, v in user_logs.items() if v['connect_time'] > cutoff_time}
 
 @bot.event
@@ -37,7 +37,7 @@ async def on_voice_state_update(member, before, after):
         await member.guild.system_channel.send(f"{member.mention} 還想逃阿乖乖蹲好")
 
     # 記錄用戶的連接和斷開時間，保留上次斷開時間
-    current_time = datetime.utcnow() + timedelta(hours=8)
+    current_time = datetime.now() 
     if before.channel is None and after.channel:
         user_logs[member.id] = {
             "username": member.name,
