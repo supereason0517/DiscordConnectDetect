@@ -129,7 +129,7 @@ async def timeout(ctx, member: discord.Member, duration: int = 60):
         await ctx.send(f"{member.name} 不在語音頻道中，無法進行 Timeout。")
 
 @bot.command(name="unban")
-@commands.has_permissions(administrator=True)
+@is_admin_or_allowed()
 async def unban(ctx, member: discord.Member):
     if member.id in voice_manager.timeout_users:
         # 在移動之前先移除使用者的 Timeout 狀態
@@ -205,13 +205,13 @@ async def timeout_error(ctx, error):
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("請指定需要 Timeout 的使用者。用法: `!timeout @使用者名 [秒數]` Ex : `!timeout @使用者名 600`")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("請提供有效的秒數。用法: `!timeout @使用者名 [秒數]`Ex : `!timeout @使用者名 600`")
+        await ctx.send("請提供有效的秒數。用法: `!timeout @使用者名 [秒數]` Ex : `!timeout @使用者名 600`")
     else:
         await ctx.send("unknown error，等等再試一次")
 
 @unban.error
 async def unban_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
+    if isinstance(error, commands.CheckFailure):
         await ctx.send("你沒有權限使用這個指令。")
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("請指定需要 Unban 的使用者。用法: `!unban @使用者名`")
