@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import os
 import discord
+import json
 
 app = Flask(__name__)
 
@@ -15,6 +16,25 @@ def home():
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# 允許列表，存放可以使用 !timeout 指令的使用者 ID
+allow_list = set()
+ALLOW_LIST_FILE = 'allow_list.json'
+
+def load_allow_list():
+    global allow_list
+    try:
+        with open(ALLOW_LIST_FILE, 'r') as f:
+            data = json.load(f)
+            allow_list = set(data)
+    except FileNotFoundError:
+        allow_list = set()
+    except json.JSONDecodeError:
+        allow_list = set()
+
+def save_allow_list():
+    with open(ALLOW_LIST_FILE, 'w') as f:
+        json.dump(list(allow_list), f)
 
 class VoiceStateManager:
     def __init__(self):
@@ -30,8 +50,8 @@ class VoiceStateManager:
         self.clean_old_logs()
 
         # 檢查 Timeout 使用者是否試圖切換頻道
-        if member.id in self.timeout_users and after.channel and after.channel != self.timeout_users[member.id]:
-            await member.move_to(self.timeout_users[member.id])
+        if member.id in self.timeout_users and after.channel and after.channel != self.timeout_users[member.id]['timeout_channel']:
+            await member.move_to(self.timeout_users[member.id]['timeout_channel'])
             await member.guild.system_channel.send(f"{member.mention} 還想逃啊，乖乖蹲好！")
 
         current_time = datetime.now(ZoneInfo('Asia/Taipei'))
@@ -52,22 +72,29 @@ voice_manager = VoiceStateManager()
 async def on_voice_state_update(member, before, after):
     await voice_manager.handle_voice_state_update(member, before, after)
 
+def is_admin_or_allowed():
+    async def predicate(ctx):
+        return ctx.author.guild_permissions.administrator or ctx.author.id in allow_list
+    return commands.check(predicate)
+
 @bot.command(name="cm")
 async def help_command(ctx):
     help_text = """
 **機器人指令列表：**
 
 - `!ping`：測試機器人是否在線。
-- `!timeout @用戶名`：將指定用戶移至 "禁閉室" 頻道，並進行 1 分鐘的 Timeout。
+- `!timeout @用戶名 [秒數]`：將指定用戶移至 "禁閉室" 頻道，並進行指定秒數的 Timeout。（預設 60 秒）Ex : `!timeout @使用者名 600`
 - `!unban @用戶名`：解除指定用戶的 Timeout 狀態。
 - `!details`：顯示所有用戶的語音連接資訊。
 - `!check`：查找最近斷線的使用者。
+- `!adduser @用戶名`：將使用者添加到允許列表，可以使用 `!timeout` 指令。（僅限管理員）
+- `!removeuser @用戶名`：將使用者從允許列表中移除。（僅限管理員）
 """
     await ctx.send(help_text)
 
 @bot.command(name="timeout")
-@commands.has_permissions(administrator=True)
-async def timeout(ctx, member: discord.Member):
+@is_admin_or_allowed()
+async def timeout(ctx, member: discord.Member, duration: int = 60):
     target_channel = discord.utils.get(ctx.guild.voice_channels, name="禁閉室")
     
     if target_channel is None:
@@ -75,25 +102,62 @@ async def timeout(ctx, member: discord.Member):
         return
 
     if member.voice:
+        # 記錄使用者原本的頻道
+        original_channel = member.voice.channel
+
         await member.move_to(target_channel)
-        voice_manager.timeout_users[member.id] = target_channel
-        await ctx.send(f"{member.name}，乖乖在裡面蹲 1 分鐘吧。")
+        voice_manager.timeout_users[member.id] = {
+            'timeout_channel': target_channel,
+            'original_channel': original_channel
+        }
+        await ctx.send(f"{member.name}，乖乖在裡面蹲 {duration} 秒吧。")
 
-        await asyncio.sleep(60)
+        async def remove_timeout():
+            await asyncio.sleep(duration)
+            if member.id in voice_manager.timeout_users:
+                # 在移動之前先移除使用者的 Timeout 狀態
+                original_channel = voice_manager.timeout_users[member.id]['original_channel']
+                del voice_manager.timeout_users[member.id]
+                # 將使用者移回原本的頻道
+                if original_channel is not None:
+                    await member.move_to(original_channel)
+                await ctx.send(f"{member.name} 的 Timeout 已結束，可以回去了")
 
-        if member.id in voice_manager.timeout_users:
-            del voice_manager.timeout_users[member.id]
-            await ctx.send(f"{member.name} 的 Timeout 已結束。")
+        # 使用 asyncio.create_task 來啟動非阻塞的協程
+        asyncio.create_task(remove_timeout())
     else:
         await ctx.send(f"{member.name} 不在語音頻道中，無法進行 Timeout。")
 
 @bot.command(name="unban")
 @commands.has_permissions(administrator=True)
 async def unban(ctx, member: discord.Member):
-    if voice_manager.timeout_users.pop(member.id, None):
-        await ctx.send(f"{member.name} 的 Timeout 已解除。")
+    if member.id in voice_manager.timeout_users:
+        # 在移動之前先移除使用者的 Timeout 狀態
+        original_channel = voice_manager.timeout_users[member.id]['original_channel']
+        del voice_manager.timeout_users[member.id]
+        # 將使用者移回原本的頻道
+        if original_channel is not None:
+            await member.move_to(original_channel)
+        await ctx.send(f"{member.name} 的 Timeout 已解除，可以回去了")
     else:
         await ctx.send(f"{member.name} 並不在 Timeout 狀態中。")
+
+@bot.command(name="adduser")
+@commands.has_permissions(administrator=True)
+async def adduser(ctx, member: discord.Member):
+    allow_list.add(member.id)
+    save_allow_list()  
+    await ctx.send(f"{member.name} 已被加到allowlist中，可以使用 `!timeout` 指令。")
+
+@bot.command(name="removeuser")
+@commands.has_permissions(administrator=True)
+async def removeuser(ctx, member: discord.Member):
+    if member.id in allow_list:
+        allow_list.remove(member.id)
+        save_allow_list()  
+        await ctx.send(f"{member.name} 已被從allowlist中移除。")
+    else:
+        await ctx.send(f"{member.name} 不在list中。")
 
 @bot.command(name="details")
 async def details_log(ctx):
@@ -115,7 +179,6 @@ async def details_log(ctx):
 async def check_most_recent_offline(ctx):
     voice_manager.clean_old_logs()
 
-    # 篩選出已經斷線的使用者
     disconnected_logs = [
         log for log in voice_manager.user_logs.values()
         if log['disconnect_time']
@@ -125,7 +188,6 @@ async def check_most_recent_offline(ctx):
         # 找到最近斷線的使用者
         most_recent_log = max(disconnected_logs, key=lambda log: log['disconnect_time'])
 
-        # 使用使用者 ID 獲取 Member 對象
         member = ctx.guild.get_member(most_recent_log['user_id'])
         disconnect_time_str = most_recent_log['disconnect_time'].strftime('%Y-%m-%d %H:%M:%S')
 
@@ -138,10 +200,14 @@ async def check_most_recent_offline(ctx):
 
 @timeout.error
 async def timeout_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
+    if isinstance(error, commands.CheckFailure):
         await ctx.send("你沒有權限使用這個指令。")
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send("請指定需要 Timeout 的使用者。用法: `!timeout @使用者名`")
+        await ctx.send("請指定需要 Timeout 的使用者。用法: `!timeout @使用者名 [秒數]` Ex : `!timeout @使用者名 600`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("請提供有效的秒數。用法: `!timeout @使用者名 [秒數]`Ex : `!timeout @使用者名 600`")
+    else:
+        await ctx.send("unknown error，等等再試一次")
 
 @unban.error
 async def unban_error(ctx, error):
@@ -149,6 +215,26 @@ async def unban_error(ctx, error):
         await ctx.send("你沒有權限使用這個指令。")
     elif isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("請指定需要 Unban 的使用者。用法: `!unban @使用者名`")
+    else:
+        await ctx.send("unknown error，等等再試一次")
+
+@adduser.error
+async def adduser_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("你沒有權限使用這個指令。")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("請指定需要加的使用者。用法: `!adduser @使用者名`")
+    else:
+        await ctx.send("unknown error，等等再試一次")
+
+@removeuser.error
+async def removeuser_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("你沒有權限使用這個指令。")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("指定需要移除的使用者。用法: `!removeuser @使用者名`")
+    else:
+        await ctx.send("unknown error，等等再試一次")
 
 @bot.command(name="ping")
 async def ping(ctx):
@@ -161,6 +247,7 @@ def run_bot():
         print(f"Bot 啟動失敗: {e}")
 
 if __name__ == "__main__":
+    load_allow_list()
     port = int(os.environ.get("PORT", 8081))
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=port)).start()
     run_bot()

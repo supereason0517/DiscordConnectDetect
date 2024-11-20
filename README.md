@@ -14,7 +14,13 @@
   - 使用 `!check` 指令，可以找出最近斷線人員。
 
 - **Ban指令**
-  - 使用 `!timeout @user` 指令，Bot 會強制移動user至禁閉室(頻道需要先建立)，會ban 1分鐘，過後會自動解除。若想要提早解除可以使用 `!unban @user` 
+  - 使用 `!timeout @user` 指令，Bot 會強制移動user至禁閉室(頻道需要先建立)，會ban 1分鐘，過後會自動解除。若想要提早解除可以使用 `!unban @user`
+  
+- **adduser指令**
+  - 使用 `!adduser @user` 將使用者添加到allowlist，使其可以使用 !timeout 指令。  
+
+- **removeuser指令**
+  - 使用 `!removeuser @user` 將使用者從allowlist中移除。
 
 - **測試指令**
   - 使用 `!ping` 指令，Bot 會回應 "Pong!"，確認 Bot 是否正常運行。
